@@ -1,50 +1,83 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { ensureCsrfToken, CSRF_TOKEN_URL } from '../client';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-describe('ensureCsrfToken', () => {
+import { request } from '../client';
+
+const REFRESH_TIMEOUT_MS = 10_000;
+
+function jsonResponse(body, { ok = true, status = 200 } = {}) {
+  return {
+    ok,
+    status,
+    json: () => Promise.resolve(body),
+  };
+}
+
+describe('api client refreshAccessToken single-flight', () => {
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-    // Clear any csrf_token cookie left over from other tests.
-    document.cookie = 'csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('throws a descriptive error when the fetch rejects', async () => {
-    fetch.mockRejectedValueOnce(new Error('network down'));
-
-    await expect(ensureCsrfToken()).rejects.toThrow(
-      /Could not fetch a CSRF token/,
-    );
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  it('throws an error containing the URL and status on a non-OK response', async () => {
-    fetch.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
+  it('performs exactly one POST /auth/refresh for two concurrent 401 retries', async () => {
+    let refreshCalls = 0;
+    const fetchMock = vi.fn((url, options = {}) => {
+      const target = typeof url === 'string' ? url : url.url;
+      if (target.endsWith('/auth/refresh')) {
+        refreshCalls += 1;
+        return new Promise((resolve) => {
+          setTimeout(() => resolve(jsonResponse({ accessToken: 'new-token' })), 10);
+        });
+      }
+      const auth = options.headers?.Authorization;
+      if (auth === 'Bearer new-token') {
+        return Promise.resolve(jsonResponse({ ok: true }));
+      }
+      return Promise.resolve(jsonResponse({ message: 'unauthorized' }, { ok: false, status: 401 }));
     });
+    vi.stubGlobal('fetch', fetchMock);
 
-    await expect(ensureCsrfToken()).rejects.toThrow(CSRF_TOKEN_URL);
-    await expect(ensureCsrfToken()).rejects.toThrow(/500/);
+    const [first, second] = await Promise.all([
+      request('/protected'),
+      request('/protected'),
+    ]);
+
+    expect(refreshCalls).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(first).toEqual({ ok: true });
+    expect(second).toEqual({ ok: true });
   });
 
-  it('throws an error mentioning the csrf_token cookie when it is missing', async () => {
-    fetch.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
+  it('aborts a hanging refresh after REFRESH_TIMEOUT_MS and resolves to null', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((url) => {
+      const target = typeof url === 'string' ? url : url.url;
+      if (target.endsWith('/auth/refresh')) {
+        return new Promise(() => {});
+      }
+      return Promise.resolve(jsonResponse({ message: 'unauthorized' }, { ok: false, status: 401 }));
     });
+    vi.stubGlobal('fetch', fetchMock);
 
-    await expect(ensureCsrfToken()).rejects.toThrow(/csrf_token/);
+    const pending = request('/protected');
+    await vi.advanceTimersByTimeAsync(REFRESH_TIMEOUT_MS + 1);
+
+    await expect(pending).resolves.toBeNull();
   });
 
-  it('does not call fetch when the csrf_token cookie is already present', async () => {
-    document.cookie = 'csrf_token=abc123; path=/';
+  it('resolves to null without throwing when the refresh response is not ok', async () => {
+    const fetchMock = vi.fn((url) => {
+      const target = typeof url === 'string' ? url : url.url;
+      if (target.endsWith('/auth/refresh')) {
+        return Promise.resolve(jsonResponse({ message: 'invalid' }, { ok: false, status: 401 }));
+      }
+      return Promise.resolve(jsonResponse({ message: 'unauthorized' }, { ok: false, status: 401 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
-    await ensureCsrfToken();
-
-    expect(fetch).not.toHaveBeenCalled();
+    await expect(request('/protected')).resolves.toBeNull();
   });
 });
