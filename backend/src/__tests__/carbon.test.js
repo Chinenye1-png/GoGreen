@@ -2,7 +2,14 @@
  * Unit tests for utils/carbon.js — carbon footprint estimation
  */
 
-const { estimateCarbonFootprint, calculateDistance, CATEGORY_DEFAULTS } = require('../utils/carbon');
+const {
+  estimateCarbonFootprint,
+  calculateDistance,
+  CATEGORY_DEFAULTS,
+  getCategoryDefault,
+  calculateTransportEmissions,
+  calculateSavingsPercent,
+} = require('../utils/carbon');
 
 describe('carbon.js — estimateCarbonFootprint', () => {
   it('calculates carbon footprint using category defaults when carbon_kg_per_unit is not provided', () => {
@@ -160,5 +167,63 @@ describe('carbon.js — CATEGORY_DEFAULTS', () => {
     Object.values(CATEGORY_DEFAULTS).forEach(value => {
       expect(value).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('carbon.js — getCategoryDefault', () => {
+  it('returns the configured default for a known category', () => {
+    expect(getCategoryDefault('vegetables')).toBe(CATEGORY_DEFAULTS.vegetables);
+    expect(getCategoryDefault('meat')).toBe(CATEGORY_DEFAULTS.meat);
+  });
+
+  it('falls back to the "other" default for unknown or missing categories', () => {
+    expect(getCategoryDefault('unknown_category')).toBe(CATEGORY_DEFAULTS.other);
+    expect(getCategoryDefault(undefined)).toBe(CATEGORY_DEFAULTS.other);
+    expect(getCategoryDefault(null)).toBe(CATEGORY_DEFAULTS.other);
+  });
+});
+
+describe('carbon.js — calculateTransportEmissions', () => {
+  it('returns zero when distance is zero or negative', () => {
+    expect(calculateTransportEmissions(0, 10)).toBe(0);
+    expect(calculateTransportEmissions(-50, 10)).toBe(0);
+  });
+
+  it('returns zero when quantity is zero or negative (avoids division by zero)', () => {
+    expect(calculateTransportEmissions(100, 0)).toBe(0);
+    expect(calculateTransportEmissions(100, -5)).toBe(0);
+  });
+
+  it('scales transport emissions with distance and quantity', () => {
+    // 100 km * 0.1 / 5 units = 2 kg per unit
+    expect(calculateTransportEmissions(100, 5)).toBe(2);
+    // 1000 km * 0.1 / 1 unit = 100 kg per unit
+    expect(calculateTransportEmissions(1000, 1)).toBe(100);
+  });
+
+  it('rounds transport emissions to 2 decimal places', () => {
+    // 33 km * 0.1 / 7 units = 0.4714... → 0.47
+    expect(calculateTransportEmissions(33, 7)).toBe(0.47);
+  });
+});
+
+describe('carbon.js — calculateSavingsPercent', () => {
+  it('returns the percentage saved versus the supermarket baseline', () => {
+    expect(calculateSavingsPercent(4, 10)).toBe(60);
+    expect(calculateSavingsPercent(0, 10)).toBe(100);
+  });
+
+  it('returns zero when the supermarket baseline is zero or negative', () => {
+    expect(calculateSavingsPercent(4, 0)).toBe(0);
+    expect(calculateSavingsPercent(4, -10)).toBe(0);
+  });
+
+  it('clamps to zero when the local footprint exceeds the baseline', () => {
+    expect(calculateSavingsPercent(15, 10)).toBe(0);
+  });
+
+  it('rounds the savings percentage to the nearest integer', () => {
+    // (10 - 3.33) / 10 = 0.667 → 67
+    expect(calculateSavingsPercent(3.33, 10)).toBe(67);
   });
 });
