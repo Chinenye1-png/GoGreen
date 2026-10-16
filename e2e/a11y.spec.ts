@@ -71,6 +71,7 @@ test.describe('Accessibility (axe)', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const { data: products } = await prodRes.json();
+    expect(Array.isArray(products), 'farmer listings payload must contain a data array').toBe(true);
     const product = (products as any[]).find((p: any) => p.name === PRODUCT_NAME);
     expect(product, 'seeded product must exist in farmer listings').toBeTruthy();
     productId = product.id;
@@ -91,6 +92,7 @@ test.describe('Accessibility (axe)', () => {
   test('product detail page', async ({ page }) => {
     await page.goto(`/product/${productId}`);
     await expect(page.locator(`text=${PRODUCT_NAME}`).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('text=404')).toHaveCount(0);
     await expectNoSeriousViolations(page, '/product/:id');
   });
 
