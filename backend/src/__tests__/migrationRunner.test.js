@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { runMigrations, getPendingFiles } = require('../db/migrationRunner');
+const { resolveUndoPath } = require('../../migrate');
 
 describe('migration runner failure recovery', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrations-'));
@@ -52,6 +53,8 @@ describe('migration runner failure recovery', () => {
     expect(sqlite.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wrong_dialect'"
     ).get()).toBeUndefined();
+  });
+
   it('orders migrations with a shared numeric prefix by full filename', () => {
     const duplicatePrefixDir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplicate-prefix-migrations-'));
     try {
@@ -64,6 +67,55 @@ describe('migration runner failure recovery', () => {
       ]);
     } finally {
       fs.rmSync(duplicatePrefixDir, { recursive: true });
+    }
+  });
+});
+
+describe('migrate.js rollback undo-file selection', () => {
+  let undoDir;
+
+  beforeEach(() => {
+    undoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'undo-migrations-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(undoDir, { recursive: true });
+  });
+
+  it('prefers the dialect-specific undo file when it exists', () => {
+    fs.writeFileSync(path.join(undoDir, '034_coupons.undo.postgres'), 'DROP TABLE coupons;');
+    fs.writeFileSync(path.join(undoDir, '034_coupons.undo.sqlite'), 'DROP TABLE coupons;');
+    fs.writeFileSync(path.join(undoDir, '034_coupons.undo.sql'), 'DROP TABLE coupons;');
+
+    expect(resolveUndoPath(undoDir, '034_coupons.sql', 'postgres'))
+      .toBe(path.join(undoDir, '034_coupons.undo.postgres'));
+    expect(resolveUndoPath(undoDir, '034_coupons.sql', 'sqlite'))
+      .toBe(path.join(undoDir, '034_coupons.undo.sqlite'));
+  });
+
+  it('falls back to the generic undo file when no dialect-specific file exists', () => {
+    fs.writeFileSync(path.join(undoDir, '034_coupons.undo.sql'), 'DROP TABLE coupons;');
+
+    expect(resolveUndoPath(undoDir, '034_coupons.sql', 'postgres'))
+      .toBe(path.join(undoDir, '034_coupons.undo.sql'));
+  });
+
+  it('exits with code 1 and logs when no undo file exists', () => {
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called');
+    });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      expect(() => resolveUndoPath(undoDir, '034_coupons.sql', 'postgres'))
+        .toThrow('process.exit called');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('No rollback file found')
+      );
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 });

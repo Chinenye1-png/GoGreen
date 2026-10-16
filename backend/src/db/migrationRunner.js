@@ -52,6 +52,23 @@ function getPendingFiles(applied, migrationsDir = MIGRATIONS_DIR) {
     .filter((f) => !applied.has(f));
 }
 
+/**
+ * Resolve the undo file to use for a given applied migration.
+ *
+ * Prefers a dialect-specific undo file (`NNN_description.undo.postgres` or
+ * `NNN_description.undo.sqlite`) and falls back to the generic
+ * `NNN_description.undo.sql`. Returns the absolute path when a file exists,
+ * or null when no undo file is present.
+ */
+function resolveUndoPath(migrationsDir, lastMigration, dialect) {
+  const base = lastMigration.replace(/\.sql$/, '');
+  const dialectFile = path.join(migrationsDir, `${base}.undo.${dialect}`);
+  if (fs.existsSync(dialectFile)) return dialectFile;
+  const genericFile = path.join(migrationsDir, `${base}.undo.sql`);
+  if (fs.existsSync(genericFile)) return genericFile;
+  return null;
+}
+
 async function runMigrations(db, migrationsDir = MIGRATIONS_DIR) {
   await ensureMigrationsTable(db);
   const applied = await getApplied(db);
@@ -116,4 +133,11 @@ async function ensureReviewSchema(db) {
   );
 }
 
-module.exports = { runMigrations, ensureMigrationsTable, getApplied, getPendingFiles, ensureReviewSchema };
+module.exports = {
+  runMigrations,
+  ensureMigrationsTable,
+  getApplied,
+  getPendingFiles,
+  ensureReviewSchema,
+  resolveUndoPath,
+};

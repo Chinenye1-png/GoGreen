@@ -62,6 +62,26 @@ async function getAdapter() {
   }
 }
 
+/**
+ * Resolve the undo file to use for a given applied migration.
+ *
+ * Prefers a dialect-specific undo file (`NNN_description.undo.postgres` or
+ * `NNN_description.undo.sqlite`) and falls back to the generic
+ * `NNN_description.undo.sql`. Returns the resolved path even when the file
+ * does not exist so callers can decide how to handle a missing rollback file.
+ */
+function resolveUndoPath(migrationsDir, lastMigration, dialect) {
+  const dialectUndoPath = path.join(
+    migrationsDir,
+    `${lastMigration.slice(0, -4)}.undo.${dialect}`
+  );
+  if (fs.existsSync(dialectUndoPath)) {
+    return dialectUndoPath;
+  }
+  const undoName = lastMigration.replace(/\.sql$/, '.undo.sql');
+  return path.join(migrationsDir, undoName);
+}
+
 async function rollback() {
   const db = await getAdapter();
   await ensureMigrationsTable(db);
@@ -76,13 +96,7 @@ async function rollback() {
   const last = [...applied].sort().at(-1);
   const undoName = last.replace(/\.sql$/, '.undo.sql');
   const dialect = db.isPostgres ? 'postgres' : 'sqlite';
-  const dialectUndoPath = path.join(
-    MIGRATIONS_DIR,
-    `${last.slice(0, -4)}.undo.${dialect}`
-  );
-  const undoPath = fs.existsSync(dialectUndoPath)
-    ? dialectUndoPath
-    : path.join(MIGRATIONS_DIR, undoName);
+  const undoPath = resolveUndoPath(MIGRATIONS_DIR, last, dialect);
 
   if (!fs.existsSync(undoPath)) {
     console.error(`[migrate] No rollback file found: ${undoName}`);
@@ -106,8 +120,12 @@ async function migrate() {
   await db.close();
 }
 
-const command = process.argv[2];
-(command === 'rollback' ? rollback() : migrate()).catch((err) => {
-  console.error('[migrate] Error:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  const command = process.argv[2];
+  (command === 'rollback' ? rollback() : migrate()).catch((err) => {
+    console.error('[migrate] Error:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { resolveUndoPath, rollback, migrate };
