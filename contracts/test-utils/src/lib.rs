@@ -75,3 +75,43 @@ pub mod noop {
     }
 }
 pub use noop::NoopToken;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::Env;
+
+    // ── success path ──────────────────────────────────────────────────────────
+    /// Minting 100 to A then transferring 40 to B leaves A with 60 and B with 40.
+    #[test]
+    fn transfer_debits_sender_and_credits_recipient() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let token = register_mock_token(&env);
+        let a = funded_account(&env, &token, 100);
+        let b = Address::generate(&env);
+
+        let client = MockTokenClient::new(&env, &token);
+        client.transfer(&a, &b, &40);
+
+        assert_eq!(client.balance(&a), 60);
+        assert_eq!(client.balance(&b), 40);
+    }
+
+    // ── insufficient-balance guard ────────────────────────────────────────────
+    /// Transferring more than the sender's balance must panic with "insufficient balance".
+    #[test]
+    #[should_panic(expected = "insufficient balance")]
+    fn transfer_panics_when_balance_is_insufficient() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let token = register_mock_token(&env);
+        let a = funded_account(&env, &token, 50);
+        let b = Address::generate(&env);
+
+        let client = MockTokenClient::new(&env, &token);
+        // Attempting to transfer 51 when only 50 is available must panic.
+        client.transfer(&a, &b, &51);
+    }
+}
