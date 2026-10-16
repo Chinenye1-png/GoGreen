@@ -11,6 +11,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { formatViolationSummary, selectBlockingViolations } from './a11y-helpers';
 
 const ts = Date.now();
 const FARMER_EMAIL = `farmer_a11y_${ts}@test.invalid`;
@@ -18,7 +19,6 @@ const PASS = 'TestPass1!';
 const PRODUCT_NAME = `A11y Beans ${ts}`;
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
-const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
 
 async function expectNoSeriousViolations(page: Page, route: string) {
   // Let data-driven content settle before scanning. `networkidle` is not
@@ -27,11 +27,8 @@ async function expectNoSeriousViolations(page: Page, route: string) {
   await page.waitForTimeout(1_000);
 
   const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
-  const blocking = results.violations.filter((v) => BLOCKING_IMPACTS.has(v.impact ?? ''));
-
-  const summary = blocking
-    .map((v) => `  [${v.impact}] ${v.id}: ${v.help} (${v.nodes.length} node(s))\n    ${v.helpUrl}`)
-    .join('\n');
+  const blocking = selectBlockingViolations(results);
+  const summary = formatViolationSummary(blocking);
 
   expect(blocking, `Serious/critical a11y violations on ${route}:\n${summary}`).toEqual([]);
 }
