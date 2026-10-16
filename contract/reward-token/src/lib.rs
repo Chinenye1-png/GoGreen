@@ -1522,4 +1522,41 @@ mod test {
         client.mint(&user2, &200);
         assert_eq!(client.balance(&user2), 200);
     }
+
+    // ── compute_fee tests (issue #7 / #1225) ────────────────────────────────
+    // compute_fee is a private associated function; these tests live in the
+    // same crate to reach it without changing visibility.
+
+    #[test]
+    fn compute_fee_truncates_toward_zero() {
+        // 9999 * 1 / 10_000 = 0.9999 → truncated to 0
+        assert_eq!(RewardToken::compute_fee(9999, 1), 0);
+        // 19999 * 1 / 10_000 = 1.9999 → truncated to 1
+        assert_eq!(RewardToken::compute_fee(19999, 1), 1);
+        // 100 * 333 / 10_000 = 3.33 → truncated to 3
+        assert_eq!(RewardToken::compute_fee(100, 333), 3);
+    }
+
+    #[test]
+    fn compute_fee_zero_bps_returns_zero() {
+        assert_eq!(RewardToken::compute_fee(1_000_000, 0), 0);
+        assert_eq!(RewardToken::compute_fee(i128::MAX, 0), 0);
+        assert_eq!(RewardToken::compute_fee(0, 0), 0);
+    }
+
+    #[test]
+    fn compute_fee_full_bps_equals_amount() {
+        // bps = 10_000 means 100% → result == amount
+        assert_eq!(RewardToken::compute_fee(1_000_000, 10_000), 1_000_000);
+        assert_eq!(RewardToken::compute_fee(0, 10_000), 0);
+        assert_eq!(RewardToken::compute_fee(1, 10_000), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "fee calculation overflow")]
+    fn compute_fee_overflowing_multiplication_panics() {
+        // i128::MAX * 10_000 overflows i128; checked_mul must catch this.
+        RewardToken::compute_fee(i128::MAX, 10_000);
+    }
+
 }
