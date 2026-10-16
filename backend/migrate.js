@@ -22,7 +22,15 @@ const { runMigrations, ensureMigrationsTable, getApplied } = require('./src/db/m
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 const USE_POSTGRES = !!process.env.DATABASE_URL;
 
-async function getAdapter() {
+/**
+ * Build a database adapter for the active dialect.
+ *
+ * Accepts an optional `dbPath` (SQLite only) or an injected `Database`
+ * instance so tests can supply an in-memory database instead of the
+ * hardcoded `market.db` file.
+ */
+async function getAdapter(options = {}) {
+  const { dbPath, database } = options;
   if (USE_POSTGRES) {
     const { Pool } = require('pg');
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -41,7 +49,7 @@ async function getAdapter() {
     };
   } else {
     const Database = require('better-sqlite3');
-    const db = new Database(path.join(__dirname, 'market.db'));
+    const db = database || new Database(dbPath || path.join(__dirname, 'market.db'));
     return {
       async query(sql, params = []) {
         if (/^\s*(SELECT|WITH)/i.test(sql)) {
@@ -62,6 +70,26 @@ async function getAdapter() {
   }
 }
 
+/**
+ * Resolve the undo file to use for a given applied migration.
+ *
+ * Prefers a dialect-specific undo file (`NNN_description.undo.postgres` or
+ * `NNN_description.undo.sqlite`) and falls back to the generic
+ * `NNN_description.undo.sql`. Returns the resolved path even when the file
+ * does not exist so callers can decide how to handle a missing rollback file.
+ */
+function resolveUndoPath(migrationsDir, lastMigration, dialect) {
+  const dialectUndoPath = path.join(
+    migrationsDir,
+    `${lastMigration.slice(0, -4)}.undo.${dialect}`
+  );
+  if (fs.existsSync(dialectUndoPath)) {
+    return dialectUndoPath;
+  }
+  const undoName = lastMigration.replace(/\.sql$/, '.undo.sql');
+  return path.join(migrationsDir, undoName);
+}
+
 async function rollback() {
   const db = await getAdapter();
   await ensureMigrationsTable(db);
@@ -76,13 +104,7 @@ async function rollback() {
   const last = [...applied].sort().at(-1);
   const undoName = last.replace(/\.sql$/, '.undo.sql');
   const dialect = db.isPostgres ? 'postgres' : 'sqlite';
-  const dialectUndoPath = path.join(
-    MIGRATIONS_DIR,
-    `${last.slice(0, -4)}.undo.${dialect}`
-  );
-  const undoPath = fs.existsSync(dialectUndoPath)
-    ? dialectUndoPath
-    : path.join(MIGRATIONS_DIR, undoName);
+  const undoPath = resolveUndoPath(MIGRATIONS_DIR, last, dialect);
 
   if (!fs.existsSync(undoPath)) {
     console.error(`[migrate] No rollback file found: ${undoName}`);
@@ -106,8 +128,12 @@ async function migrate() {
   await db.close();
 }
 
-const command = process.argv[2];
-(command === 'rollback' ? rollback() : migrate()).catch((err) => {
-  console.error('[migrate] Error:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  const command = process.argv[2];
+  (command === 'rollback' ? rollback() : migrate()).catch((err) => {
+    console.error('[migrate] Error:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { getAdapter, resolveUndoPath, rollback, migrate };

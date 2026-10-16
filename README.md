@@ -603,8 +603,5 @@ For security vulnerabilities, follow the process in [SECURITY.md](./SECURITY.md)
 <!-- handsoff-issue-24 -->
 - #24: Fix duplicate app.listen / duplicate job startup in backend/src/index.js
 
-<!-- handsoff-issue-10 -->
-- #10: Add tests for the frontend error-message and Stellar-error mapping utilities
-
-<!-- handsoff-issue-12 -->
-- #12: Add tests for CreatorEarningsContract's CreatorIsPlatform guard and batch_credit size limit
+<!-- handsoff-issue-15 -->
+- #15: Add tests for the RewardToken vesting index and vested_balance accounting
