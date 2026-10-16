@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { runMigrations, getPendingFiles } = require('../db/migrationRunner');
-const { resolveUndoPath } = require('../../migrate');
+const { resolveUndoPath, getAdapter } = require('../../migrate');
 
 describe('migration runner failure recovery', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrations-'));
@@ -117,5 +117,53 @@ describe('migrate.js rollback undo-file selection', () => {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+});
+
+describe('migrate.js SQLite adapter SELECT/WITH detection', () => {
+  let sqlite;
+  let adapter;
+
+  beforeEach(() => {
+    sqlite = new Database(':memory:');
+    sqlite.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT);');
+    sqlite.prepare('INSERT INTO items (name) VALUES (?)').run('alpha');
+    adapter = getAdapter({ isPostgres: false, database: sqlite });
+  });
+
+  afterEach(() => {
+    sqlite.close();
+  });
+
+  it('routes a SELECT query to the read path and returns rows', async () => {
+    const result = await adapter.query('SELECT id, name FROM items');
+    expect(result.rows).toEqual([{ id: 1, name: 'alpha' }]);
+  });
+
+  it('routes a WITH query to the read path and returns rows', async () => {
+    const result = await adapter.query(
+      'WITH selected AS (SELECT id, name FROM items) SELECT * FROM selected'
+    );
+    expect(result.rows).toEqual([{ id: 1, name: 'alpha' }]);
+  });
+
+  it('routes a SELECT prefixed by whitespace/newline to the read path', async () => {
+    const result = await adapter.query('\n  SELECT id, name FROM items');
+    expect(result.rows).toEqual([{ id: 1, name: 'alpha' }]);
+  });
+
+  it('routes an INSERT to the write path and returns rowCount with empty rows', async () => {
+    const result = await adapter.query('INSERT INTO items (name) VALUES (?)', ['beta']);
+    expect(result).toEqual({ rows: [], rowCount: 1 });
+  });
+
+  it('routes an UPDATE to the write path and returns rowCount with empty rows', async () => {
+    const result = await adapter.query('UPDATE items SET name = ? WHERE id = ?', ['gamma', 1]);
+    expect(result).toEqual({ rows: [], rowCount: 1 });
+  });
+
+  it('routes a DELETE to the write path and returns rowCount with empty rows', async () => {
+    const result = await adapter.query('DELETE FROM items WHERE id = ?', [1]);
+    expect(result).toEqual({ rows: [], rowCount: 1 });
   });
 });

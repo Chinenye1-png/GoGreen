@@ -18,6 +18,56 @@ const logger = require('../logger');
 
 const MIGRATIONS_DIR = path.join(__dirname, '../../migrations');
 
+/**
+ * Build a database adapter for the given dialect.
+ *
+ * For SQLite, an optional `dbPath` (or an injected better-sqlite3 `Database`
+ * instance) may be supplied so callers — including tests — can use an
+ * in-memory database instead of the default on-disk `market.db`.
+ *
+ * The SQLite adapter routes statements that begin with `SELECT` or `WITH`
+ * (ignoring leading whitespace) through `prepare(...).all(...)` and returns
+ * `{ rows }`; all other statements go through `.run(...)` and return
+ * `{ rows: [], rowCount: info.changes }`.
+ */
+function getAdapter(dialect, dbPathOrInstance) {
+  if (dialect === 'postgres') {
+    const { Pool } = require('pg');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    return {
+      isPostgres: true,
+      placeholder: (i) => `$${i}`,
+      query: (sql, params = []) => pool.query(sql, params),
+      exec: (sql) => pool.query(sql),
+      close: () => pool.end(),
+    };
+  }
+
+  const Database = require('better-sqlite3');
+  const db =
+    dbPathOrInstance && typeof dbPathOrInstance.prepare === 'function'
+      ? dbPathOrInstance
+      : new Database(dbPathOrInstance || path.join(__dirname, 'market.db'));
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+
+  return {
+    isPostgres: false,
+    placeholder: () => '?',
+    query: (sql, params = []) => {
+      if (/^\s*(SELECT|WITH)/i.test(sql)) {
+        return { rows: db.prepare(sql).all(...params) };
+      }
+      const info = db.prepare(sql).run(...params);
+      return { rows: [], rowCount: info.changes };
+    },
+    exec: (sql) => {
+      db.exec(sql);
+    },
+    close: () => db.close(),
+  };
+}
+
 async function ensureMigrationsTable(db) {
   if (db.isPostgres) {
     await db.exec(`
@@ -134,6 +184,7 @@ async function ensureReviewSchema(db) {
 }
 
 module.exports = {
+  getAdapter,
   runMigrations,
   ensureMigrationsTable,
   getApplied,

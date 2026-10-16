@@ -22,7 +22,15 @@ const { runMigrations, ensureMigrationsTable, getApplied } = require('./src/db/m
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 const USE_POSTGRES = !!process.env.DATABASE_URL;
 
-async function getAdapter() {
+/**
+ * Build a database adapter for the active dialect.
+ *
+ * Accepts an optional `dbPath` (SQLite only) or an injected `Database`
+ * instance so tests can supply an in-memory database instead of the
+ * hardcoded `market.db` file.
+ */
+async function getAdapter(options = {}) {
+  const { dbPath, database } = options;
   if (USE_POSTGRES) {
     const { Pool } = require('pg');
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -41,7 +49,7 @@ async function getAdapter() {
     };
   } else {
     const Database = require('better-sqlite3');
-    const db = new Database(path.join(__dirname, 'market.db'));
+    const db = database || new Database(dbPath || path.join(__dirname, 'market.db'));
     return {
       async query(sql, params = []) {
         if (/^\s*(SELECT|WITH)/i.test(sql)) {
@@ -128,4 +136,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { resolveUndoPath, rollback, migrate };
+module.exports = { getAdapter, resolveUndoPath, rollback, migrate };
