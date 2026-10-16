@@ -602,3 +602,6 @@ For security vulnerabilities, follow the process in [SECURITY.md](./SECURITY.md)
 
 <!-- handsoff-issue-24 -->
 - #24: Fix duplicate app.listen / duplicate job startup in backend/src/index.js
+
+<!-- handsoff-issue-10 -->
+- #10: Add tests for the frontend error-message and Stellar-error mapping utilities
