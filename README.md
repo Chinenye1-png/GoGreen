@@ -605,3 +605,6 @@ For security vulnerabilities, follow the process in [SECURITY.md](./SECURITY.md)
 
 <!-- handsoff-issue-10 -->
 - #10: Add tests for the frontend error-message and Stellar-error mapping utilities
+
+<!-- handsoff-issue-12 -->
+- #12: Add tests for CreatorEarningsContract's CreatorIsPlatform guard and batch_credit size limit
