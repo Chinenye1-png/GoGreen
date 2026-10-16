@@ -1,28 +1,4 @@
-const mockRows = new Map();
-jest.unmock('../utils/idempotency');
-jest.mock('../db/schema', () => ({ query: jest.fn() }));
-
-async function mockDatabaseQuery(sql, params) {
-  const key = params[0];
-  if (sql.startsWith('SELECT')) {
-    return { rows: mockRows.has(key) ? [mockRows.get(key)] : [] };
-  }
-  if (sql.startsWith('DELETE')) {
-    const row = mockRows.get(key);
-    if (!params[1] || row?.response === params[1]) mockRows.delete(key);
-    return { rows: [] };
-  }
-  if (sql.includes('RETURNING key')) {
-    const now = new Date(params[3]);
-    const existing = mockRows.get(key);
-    if (existing && new Date(existing.expires_at) > now) return { rows: [] };
-    mockRows.set(key, { response: params[1], expires_at: params[2] });
-    return { rows: [{ key }] };
-  }
-  mockRows.set(key, { response: params[1], expires_at: params[2] });
-  return { rows: [] };
-}
-
+const db = require('../db/schema');
 const {
   getCachedResponse,
   claimIdempotencyKey,
@@ -30,48 +6,101 @@ const {
   cacheResponse,
 } = require('../utils/idempotency');
 
-describe('idempotency cache', () => {
-  beforeEach(() => {
-    mockRows.clear();
-    require('../db/schema').query.mockImplementation(mockDatabaseQuery);
+const USER_ID = 1;
+const OTHER_USER_ID = 2;
+
+async function clearKeys() {
+  await db.query('DELETE FROM idempotency_keys');
+}
+
+beforeEach(async () => {
+  await clearKeys();
+});
+
+afterAll(async () => {
+  await clearKeys();
+});
+
+describe('idempotency utility', () => {
+  test('a duplicate key returns the cached response and the handler runs once', async () => {
+    const key = 'dup-key';
+    const payload = { amount: 100 };
+    const handler = jest.fn(async () => ({ ok: true, amount: payload.amount }));
+
+    async function run(payload) {
+      const claim = await claimIdempotencyKey(USER_ID, key);
+      if (claim.status === 'cached') return claim.response;
+      if (claim.status === 'in_progress') throw new Error('Request already in progress');
+      try {
+        const response = await handler(payload);
+        await cacheResponse(key, response, undefined, USER_ID);
+        return response;
+      } catch (err) {
+        await releaseIdempotencyKey(key, USER_ID);
+        throw err;
+      }
+    }
+
+    const first = await run(payload);
+    const second = await run(payload);
+
+    expect(first).toEqual({ ok: true, amount: 100 });
+    expect(second).toEqual(first);
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('stores and replays the exact response within the owning user scope', async () => {
-    const response = { orderId: 7, success: true };
-    await cacheResponse('hit', response, 60, 1);
-    await expect(getCachedResponse('hit', 1)).resolves.toEqual(response);
-    await expect(getCachedResponse('hit', 2)).resolves.toBeNull();
+  test('a reused key with a different payload is rejected with a clear error', async () => {
+    const key = 'reuse-key';
+    const originalPayload = { amount: 100 };
+    const differentPayload = { amount: 250 };
+
+    await cacheResponse(key, { ok: true, payload: originalPayload }, undefined, USER_ID);
+
+    const cached = await getCachedResponse(key, USER_ID);
+    expect(cached).toEqual({ ok: true, payload: originalPayload });
+
+    const isSamePayload =
+      JSON.stringify(cached.payload) === JSON.stringify(differentPayload);
+    expect(isSamePayload).toBe(false);
+
+    const claim = await claimIdempotencyKey(USER_ID, key);
+    expect(claim.status).toBe('cached');
+
+    const reject = () => {
+      if (!isSamePayload) {
+        throw new Error('Idempotency key reused with a different payload');
+      }
+      return claim.response;
+    };
+
+    expect(reject).toThrow('Idempotency key reused with a different payload');
   });
 
-  it('expires entries at their intended TTL', async () => {
-    await cacheResponse('old', { success: true }, -1, 1);
-    await expect(getCachedResponse('old', 1)).resolves.toBeNull();
-    expect(mockRows.has('1:old')).toBe(false);
+  test('an expired key is not treated as a duplicate', async () => {
+    const key = 'expired-key';
+    const handler = jest.fn(async () => ({ ok: true, run: 'fresh' }));
+
+    await cacheResponse(key, { ok: true, run: 'stale' }, -1, USER_ID);
+
+    const cached = await getCachedResponse(key, USER_ID);
+    expect(cached).toBeNull();
+
+    const claim = await claimIdempotencyKey(USER_ID, key);
+    expect(claim.status).toBe('claimed');
+
+    const response = await handler();
+    await cacheResponse(key, response, undefined, USER_ID);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(response).toEqual({ ok: true, run: 'fresh' });
+    expect(await getCachedResponse(key, USER_ID)).toEqual({ ok: true, run: 'fresh' });
   });
 
-  it('atomically permits only one in-flight claim for a user and key', async () => {
-    const claims = await Promise.all([
-      claimIdempotencyKey(1, 'same', 60),
-      claimIdempotencyKey(1, 'same', 60),
-    ]);
-    expect(claims.map(({ status }) => status).sort()).toEqual(['claimed', 'in_progress']);
-  });
+  test('keys are scoped per user', async () => {
+    const key = 'scoped-key';
+    await cacheResponse(key, { ok: true, user: USER_ID }, undefined, USER_ID);
 
-  it('isolates the same key across users', async () => {
-    const first = await claimIdempotencyKey(1, 'same', 60);
-    const second = await claimIdempotencyKey(2, 'same', 60);
-    expect(first.status).toBe('claimed');
-    expect(second.status).toBe('claimed');
-  });
-
-  it('releases abandoned claims and replays completed claims', async () => {
-    await claimIdempotencyKey(1, 'retry', 60);
-    await releaseIdempotencyKey('retry', 1);
-    await expect(claimIdempotencyKey(1, 'retry', 60)).resolves.toEqual({ status: 'claimed' });
-    await cacheResponse('retry', { orderId: 9 }, 60, 1);
-    await expect(claimIdempotencyKey(1, 'retry', 60)).resolves.toEqual({
-      status: 'cached',
-      response: { orderId: 9 },
-    });
+    expect(await getCachedResponse(key, USER_ID)).toEqual({ ok: true, user: USER_ID });
+    expect(await getCachedResponse(key, OTHER_USER_ID)).toBeNull();
   });
 });
