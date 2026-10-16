@@ -5,12 +5,13 @@
 ///
 /// Returns `true` if `id` is valid, `false` otherwise.
 ///
-/// TODO(#1219): Not currently wired into any entrypoint. Every ID-like
-/// argument in this crate (`order_id`, snapshot/dispute lookups, etc.) is a
-/// `u64`, not a string, so there is nothing to call this against yet. Apply
-/// it to `payment_id`, `order_id` (string form), `refund_id`, and
-/// `dispute_id` before any state is written if/when a string-typed ID is
-/// introduced.
+/// **Dead-code gate (issue #5 / #1219):** Every ID-like argument in this crate
+/// is a `u64` today, so `is_valid_id` has no production call site. It is
+/// compiled only in test builds (`#[cfg(test)]`) so it does not appear in the
+/// release WASM artifact. Wire it into whichever entrypoint first accepts a
+/// string-typed ID (e.g. a future `set_payment_ref(String)` or `note(String)`
+/// field) and remove the `#[cfg(test)]` attribute at that point.
+#[cfg(test)]
 pub fn is_valid_id(id: &str) -> bool {
     let len = id.len();
     if len < 3 || len > 64 {
