@@ -599,3 +599,6 @@ For security vulnerabilities, follow the process in [SECURITY.md](./SECURITY.md)
 
 <!-- handsoff-issue-1382 -->
 - #1382: Align `api/client.js` with real backend routes: about a dozen methods call endpoints that don't exist
+
+<!-- handsoff-issue-24 -->
+- #24: Fix duplicate app.listen / duplicate job startup in backend/src/index.js
