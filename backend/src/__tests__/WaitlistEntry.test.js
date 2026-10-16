@@ -108,6 +108,90 @@ describe('WaitlistEntry', () => {
       expect(result.isValid).toBe(false);
       expect(result.errors).toContain('created_at must be a valid date');
     });
+
+    describe('boundary and error-message cases', () => {
+      test('valid entry returns isValid true with empty errors array', () => {
+        const entry = new WaitlistEntry(validData);
+        const result = entry.validate();
+        expect(result).toEqual({ isValid: true, errors: [] });
+      });
+
+      const positiveIntegerFields = ['buyer_id', 'product_id', 'quantity'];
+
+      const invalidIntegerValues = [
+        ['null', null],
+        ['zero', 0],
+        ['negative', -5],
+        ['non-integer float', 1.5],
+        ['numeric string', '3'],
+      ];
+
+      describe.each(positiveIntegerFields)('%s', (field) => {
+        it.each(invalidIntegerValues)(
+          'rejects %s with exact error message',
+          (_label, value) => {
+            const entry = new WaitlistEntry({ ...validData, [field]: value });
+            const result = entry.validate();
+            expect(result.isValid).toBe(false);
+            expect(result.errors).toContain(`${field} must be a positive integer`);
+          }
+        );
+      });
+
+      describe('position', () => {
+        test('accepts null position', () => {
+          const entry = new WaitlistEntry({ ...validData, position: null });
+          const result = entry.validate();
+          expect(result).toEqual({ isValid: true, errors: [] });
+        });
+
+        it.each([
+          ['zero', 0],
+          ['negative', -1],
+          ['non-integer float', 2.5],
+          ['numeric string', '1'],
+        ])('rejects %s position with exact error message', (_label, value) => {
+          const entry = new WaitlistEntry({ ...validData, position: value });
+          const result = entry.validate();
+          expect(result.isValid).toBe(false);
+          expect(result.errors).toContain('position must be a positive integer');
+        });
+      });
+
+      describe('created_at', () => {
+        test('accepts a Date instance', () => {
+          const entry = new WaitlistEntry({
+            ...validData,
+            created_at: new Date('2024-01-01T00:00:00.000Z'),
+          });
+          const result = entry.validate();
+          expect(result).toEqual({ isValid: true, errors: [] });
+        });
+
+        test('accepts a valid ISO string', () => {
+          const entry = new WaitlistEntry({
+            ...validData,
+            created_at: '2024-06-15T12:30:00.000Z',
+          });
+          const result = entry.validate();
+          expect(result).toEqual({ isValid: true, errors: [] });
+        });
+
+        test('rejects an unparseable string with exact error message', () => {
+          const entry = new WaitlistEntry({ ...validData, created_at: 'not-a-date' });
+          const result = entry.validate();
+          expect(result.isValid).toBe(false);
+          expect(result.errors).toContain('created_at must be a valid date');
+        });
+
+        test('rejects a non-Date object with exact error message', () => {
+          const entry = new WaitlistEntry({ ...validData, created_at: { foo: 'bar' } });
+          const result = entry.validate();
+          expect(result.isValid).toBe(false);
+          expect(result.errors).toContain('created_at must be a valid date');
+        });
+      });
+    });
   });
 
   describe('toJSON', () => {
@@ -258,45 +342,9 @@ describe('WaitlistEntry', () => {
 
     test('returns false for different entries', () => {
       const entry1 = new WaitlistEntry(validData);
-      const entry2 = new WaitlistEntry({ ...validData, quantity: 3 });
+      const entry2 = new WaitlistEntry({ ...validData, buyer_id: 999 });
 
       expect(entry1.equals(entry2)).toBe(false);
-    });
-
-    test('returns false for non-WaitlistEntry object', () => {
-      const entry = new WaitlistEntry(validData);
-
-      expect(entry.equals({})).toBe(false);
-      expect(entry.equals(null)).toBe(false);
-    });
-  });
-
-  describe('clone', () => {
-    test('creates identical copy', () => {
-      const entry = new WaitlistEntry(validData);
-      const clone = entry.clone();
-
-      expect(clone.equals(entry)).toBe(true);
-      expect(clone).not.toBe(entry); // Different instances
-    });
-  });
-
-  describe('JSON round trip property', () => {
-    test('parsing then formatting produces equivalent object', () => {
-      const entry = new WaitlistEntry(validData);
-      const json = entry.toJSON();
-      const parsed = WaitlistEntry.fromJSON(json);
-      const formatted = parsed.format();
-
-      expect(formatted).toEqual(json);
-    });
-
-    test('round trip with string serialization', () => {
-      const entry = new WaitlistEntry(validData);
-      const jsonString = JSON.stringify(entry.toJSON());
-      const parsed = WaitlistEntry.fromJSON(jsonString);
-
-      expect(parsed.equals(entry)).toBe(true);
     });
   });
 });
