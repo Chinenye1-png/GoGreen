@@ -75,4 +75,4 @@ async function fireOrderWebhook(db, event, order) {
   logger.error(`[webhook] All ${MAX_RETRIES} attempts failed for order ${order.id} event ${event}`);
 }
 
-module.exports = { fireOrderWebhook, signPayload, SUPPORTED_EVENTS };
+module.exports = { fireOrderWebhook, signPayload, buildPayload, SUPPORTED_EVENTS };

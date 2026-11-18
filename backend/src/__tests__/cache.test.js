@@ -114,5 +114,10 @@ describe('cache module', () => {
       const result = await cache.get('mykey');
       expect(result).toBeNull();
     });
+
+    it('returns null when the Redis client rejects', async () => {
+      mockGet.mockRejectedValueOnce(new Error('connection lost'));
+      await expect(cache.get('mykey')).resolves.toBeNull();
+    });
   });
 });
